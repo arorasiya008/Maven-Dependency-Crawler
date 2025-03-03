@@ -1,3 +1,4 @@
+
 import requests
 import xmltodict
 from pymongo import MongoClient
@@ -41,7 +42,7 @@ collection = db.maven_dependencies
 # Maven URLs
 MAVEN_REPO_URL = "https://repo.maven.apache.org/maven2/{}/{}/{}/{}-{}.pom"
 MAVEN_DIRECTORY_URL = "https://repo.maven.apache.org/maven2/{}/{}/{}/"
-MAVEN_SEARCH_API = "https://search.maven.org/solrsearch/select?q=:&rows=100&start={}&wt=json"
+MAVEN_SEARCH_API = "https://search.maven.org/solrsearch/select?q=*:*&rows=100&start={}&wt=json"
 
 def fetch_last_modified_and_size(group_id, artifact_id, version):
     """Fetches timestamp and JAR size from the Maven directory listing, handling different JAR naming patterns."""
@@ -97,6 +98,8 @@ def fetch_last_modified_and_size(group_id, artifact_id, version):
                 parts = value.split()
                 jar_size=parts[3]
                 return timestamp, jar_size
+        
+        
 
     return timestamp, jar_size
 
@@ -165,6 +168,8 @@ def get_pom_properties(pom_xml, accumulated_properties):
 
     return accumulated_properties
 
+
+
 def modify_pom_file(group_id, artifact_id, version):
     """Replaces placeholders in the POM file with actual values."""
     with open(POM_FILE_PATH, "r") as file:
@@ -178,17 +183,9 @@ def modify_pom_file(group_id, artifact_id, version):
         file.write(content)
 
 def restore_pom_file(group_id, artifact_id, version):
-    """Restores placeholders in the POM file after processing without regenerating it entirely."""
-    with open(POM_FILE_PATH, "r") as file:
-        content = file.read()
-
-    # Replace actual values back with placeholders
-    content = content.replace(group_id, "{{GROUP_ID}}")
-    content = content.replace(artifact_id, "{{ARTIFACT_ID}}")
-    content = content.replace(version, "{{VERSION}}")
 
     with open(POM_FILE_PATH, "w") as file:
-        file.write(content)
+        file.write(POM_TEMPLATE)
 
 
 
@@ -221,7 +218,7 @@ def get_transitive_dependencies(group_id, artifact_id, version):
     except Exception as e:
         print(f"⚠ Error extracting dependencies: {e}")
 
-    group_id, artifact_id, version  # Restore placeholders after processing
+    restore_pom_file(group_id, artifact_id, version)
     return dependencies
 
 def parse_pom(pom_xml):
