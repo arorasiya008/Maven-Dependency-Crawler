@@ -1,4 +1,3 @@
-
 import requests
 import xmltodict
 from pymongo import MongoClient
@@ -72,7 +71,6 @@ def fetch_last_modified_and_size(group_id, artifact_id, version):
     timestamp="Unknown"
     jar_size="Unknown"
 
-    
     href_dict = {}
 
     for link, line in zip(pre_tag.find_all("a"), lines):
@@ -99,8 +97,6 @@ def fetch_last_modified_and_size(group_id, artifact_id, version):
                 jar_size=parts[3]
                 return timestamp, jar_size
         
-        
-
     return timestamp, jar_size
 
 def resolve_placeholder(value, properties, project):
@@ -108,7 +104,7 @@ def resolve_placeholder(value, properties, project):
     if value is None:
         return "Unknown"
     if value.startswith("${project.parent.") and value.endswith("}"):
-        prop_name = value.replace("${project.", "").rstrip("}")
+        prop_name = value.replace("${project.parent", "").rstrip("}")
         return project.get("parent").get(prop_name, value)
     if value.startswith("${project.") and value.endswith("}"):
         prop_name = value.replace("${project.", "").rstrip("}")
@@ -168,8 +164,6 @@ def get_pom_properties(pom_xml, accumulated_properties):
 
     return accumulated_properties
 
-
-
 def modify_pom_file(group_id, artifact_id, version):
     """Replaces placeholders in the POM file with actual values."""
     with open(POM_FILE_PATH, "r") as file:
@@ -187,8 +181,6 @@ def restore_pom_file(group_id, artifact_id, version):
     with open(POM_FILE_PATH, "w") as file:
         file.write(POM_TEMPLATE)
 
-
-
 def get_transitive_dependencies(group_id, artifact_id, version):
     """Extracts transitive dependencies using the mvn dependency:tree command."""
     modify_pom_file(group_id, artifact_id, version)  # Replace placeholders with real values
@@ -200,11 +192,9 @@ def get_transitive_dependencies(group_id, artifact_id, version):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=30
+            timeout=30,
+            shell=True,
         )
-
-       
-
 
         if result.returncode == 0:
             for line in result.stdout.split("\n"):
@@ -221,11 +211,13 @@ def get_transitive_dependencies(group_id, artifact_id, version):
     restore_pom_file(group_id, artifact_id, version)
     return dependencies
 
-def parse_pom(pom_xml):
+def parse_pom(pom_xml, group_id, artifact_id, version):
     """Parses POM XML, extracts dependencies, and resolves properties from parent POMs."""
     properties = OrderedDict()  # Stores merged properties (including parent POM properties)
     child_modules = []
     parent_module = "Unknown"
+    description = "Unknown"
+    source_code_url = "Unknown"
 
     try:
         pom_dict = xmltodict.parse(pom_xml)
@@ -255,14 +247,18 @@ def parse_pom(pom_xml):
             modules = project.get("modules", {}).get("module")
             if isinstance(modules, list):
                 for module in modules:
-                    child_modules.append(f"{project['groupId']}:{module}:{project['version']}")
+                    child_modules.append(f"{group_id}:{module}:{version}")
             elif isinstance(modules, str):
-                child_modules.append(f"{project['groupId']}:{modules}:{project['version']}")
+                child_modules.append(f"{group_id}:{modules}:{version}")
 
         return description, source_code_url, parent_module, child_modules
 
     except Exception as e:
         print(f"⚠ Error parsing POM: {e}")
+        print(description)
+        print(child_modules)
+
+    return description, source_code_url, parent_module, child_modules
 
 def store_dependency(group_id, artifact_id, version, last_modified, jar_size, description, transitive_deps, source_code_url, parent_module, child_modules):
     """Stores dependency in MongoDB with last modified timestamp and JAR size."""
@@ -327,9 +323,9 @@ def store_dependency(group_id, artifact_id, version, last_modified, jar_size, de
         })
         print(f"✅ Added to DB: {dependency_id} (Last Modified: {last_modified}, Size: {jar_size})")
 
-
 def process_dependency(group_id, artifact_id, version):
     """Processes a single dependency and its transitive dependencies."""
+    print(group_id)
 
     # Fetch last modified timestamp & JAR size
     last_modified, jar_size = fetch_last_modified_and_size(group_id, artifact_id, version)
@@ -348,7 +344,7 @@ def process_dependency(group_id, artifact_id, version):
         transitive_deps = get_transitive_dependencies(group_id, artifact_id, version)
 
         # Parse the POM for other details
-        description, source_code_url, parent_module, child_modules = parse_pom(pom_xml)
+        description, source_code_url, parent_module, child_modules = parse_pom(pom_xml, group_id, artifact_id, version)
 
     # Store in MongoDB even if POM was missing
     store_dependency(group_id, artifact_id, version, last_modified, jar_size, description, transitive_deps, source_code_url, parent_module, child_modules)
