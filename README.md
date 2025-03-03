@@ -15,13 +15,6 @@ This project automates the process of **fetching metadata** (last modified times
 
 ---
 
-### **Fetching POM files**
-1. Construct the appropriate URL based on the artifact's `groupId`, `artifactId`, and `version`.
-2. Send a request to the Maven Central Repository and return the POM content if found.
-3. Return an error message if not found.
-
-   ---
-
 ### **Fetching all dependencies**
 1. Start with an initial index (start=0) and fetches dependencies in batches.
 2. Send a request to the Maven Search API to retrieve dependency metadata.
@@ -30,7 +23,14 @@ This project automates the process of **fetching metadata** (last modified times
 5. Call `process_dependency` to fetch and store metadata.
 6. Iterates through pages until no more data is available, respecting API rate limits.
 
-    ---
+---
+
+### **Fetching POM files**
+1. Construct the appropriate URL based on the artifact's `groupId`, `artifactId`, and `version`.
+2. Send a request to the Maven Central Repository and return the POM content if found.
+3. Return an error message if not found.
+
+---
 
 ### **Fetching Transitive Dependencies**  
 1. **Create a `pom.xml` file** in the current working directory.  
