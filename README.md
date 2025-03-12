@@ -38,7 +38,7 @@ This project automates the process of **fetching metadata** (last modified times
 3. **Run the command**:  
    ```sh
    mvn dependency:tree -f pom.xml
-4. **This generates a dependency tree**, which is then parsed to extract transitive dependencies.
+4. **This generates a dependency tree**, which is then parsed to extract the first level of transitive dependencies.Only the first-level dependencies in the tree are considered, as deeper levels will be included in the entries for these first-level dependencies.
 5. **Restore** `pom.xml` to its original state (with placeholders instead of actual values).
 6. **Once all dependencies are processed, delete** `pom.xml` to clean up.
 
