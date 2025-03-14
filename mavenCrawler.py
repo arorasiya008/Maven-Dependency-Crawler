@@ -6,6 +6,7 @@ from collections import OrderedDict
 import time
 import subprocess
 import os
+import re
 from dotenv import load_dotenv
 
 POM_TEMPLATE = """<project>
@@ -35,7 +36,7 @@ print(f"POM file created at: {POM_FILE_PATH}")
 load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI)
-db = client.maven_dependencies
+db = client.maven_dependency
 collection = db.maven_dependencies
 
 # Maven URLs
@@ -188,7 +189,7 @@ def get_transitive_dependencies(group_id, artifact_id, version):
 
     try:
         result = subprocess.run(
-            ["mvn", "dependency:tree", "-f", POM_FILE_PATH],
+            ["mvn", "dependency:tree","-Ddepth=2", "-f", POM_FILE_PATH],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -197,9 +198,21 @@ def get_transitive_dependencies(group_id, artifact_id, version):
         )
 
         if result.returncode == 0:
-            for line in result.stdout.split("\n"):
+            clean_lines = [
+                line.replace("[INFO] ", "", 1) if line.startswith("[INFO] ") else line
+                for line in result.stdout.splitlines()
+            ]
+            for line in clean_lines:
                 if "+- " in line or "\\- " in line:
-                    dependencies.append(line.strip().split(" ")[-1])
+                    parts = line.split(":")
+                    depth = (len(line) - len(line.lstrip(" |"))) // 2
+                    group_id = re.sub(r'^[^a-zA-Z0-9]+', '', parts[0])
+                    artifact_id = parts[1]
+                    version = parts[3]
+                    scope = parts[4]
+                    if(depth == 1):
+                        dependency = f"{group_id}:{artifact_id}:{version}:{scope}"
+                        dependencies.append(dependency)
         else:
             print(f"⚠ Error running mvn dependency:tree: {result.stderr}")
 
@@ -207,7 +220,6 @@ def get_transitive_dependencies(group_id, artifact_id, version):
         print(f"⚠ Timeout while extracting dependencies for {group_id}:{artifact_id}:{version}")
     except Exception as e:
         print(f"⚠ Error extracting dependencies: {e}")
-
     restore_pom_file(group_id, artifact_id, version)
     return dependencies
 
@@ -325,7 +337,6 @@ def store_dependency(group_id, artifact_id, version, last_modified, jar_size, de
 
 def process_dependency(group_id, artifact_id, version):
     """Processes a single dependency and its transitive dependencies."""
-    print(group_id)
 
     # Fetch last modified timestamp & JAR size
     last_modified, jar_size = fetch_last_modified_and_size(group_id, artifact_id, version)

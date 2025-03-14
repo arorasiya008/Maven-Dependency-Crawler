@@ -1,0 +1,13 @@
+<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>temp-group</groupId>
+    <artifactId>temp-artifact</artifactId>
+    <version>1.0</version>
+    <dependencies>
+        <dependency>
+            <groupId>{{GROUP_ID}}</groupId>
+            <artifactId>{{ARTIFACT_ID}}</artifactId>
+            <version>{{VERSION}}</version>
+        </dependency>
+    </dependencies>
+</project>
