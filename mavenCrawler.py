@@ -125,7 +125,7 @@ def fetch_pom(group_id, artifact_id, version):
     if response.status_code == 200:
         return response.text
     print(f"❌ POM not found for {group_id}:{artifact_id}:{version}")
-    return ""
+    return None  # Return None if POM not found
 
 def get_pom_properties(pom_xml, accumulated_properties):
     """
@@ -215,11 +215,13 @@ def get_transitive_dependencies(group_id, artifact_id, version):
                         dependencies.append(dependency)
         else:
             print(f"⚠ Error running mvn dependency:tree: {result.stderr}")
+            dependencies = None  # Set to None if there's an error
 
-    except subprocess.TimeoutExpired:
-        print(f"⚠ Timeout while extracting dependencies for {group_id}:{artifact_id}:{version}")
+    # except subprocess.TimeoutExpired:
+    #     print(f"⚠ Timeout while extracting dependencies for {group_id}:{artifact_id}:{version}")
     except Exception as e:
         print(f"⚠ Error extracting dependencies: {e}")
+        dependencies = None  # Set to None if there's an error
     restore_pom_file(group_id, artifact_id, version)
     return dependencies
 
@@ -357,8 +359,13 @@ def process_dependency(group_id, artifact_id, version):
         # Parse the POM for other details
         description, source_code_url, parent_module, child_modules = parse_pom(pom_xml, group_id, artifact_id, version)
 
-    # Store in MongoDB even if POM was missing
-    store_dependency(group_id, artifact_id, version, last_modified, jar_size, description, transitive_deps, source_code_url, parent_module, child_modules)
+    # Store in MongoDB only if POM was found and transitive dependencies are resolved
+    if pom_xml and transitive_deps is not None:
+        store_dependency(group_id, artifact_id, version, last_modified, jar_size, description, transitive_deps, source_code_url, parent_module, child_modules)
+        for dependency in transitive_deps:
+            dep_parts = dependency.split(":")
+            dep_group_id, dep_artifact_id, dep_version = dep_parts
+            process_dependency(dep_group_id, dep_artifact_id, dep_version)
 
 def get_all_dependencies():
     """Fetches dependencies from Maven Central and processes them."""
