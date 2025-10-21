@@ -9,7 +9,9 @@ import os
 import re
 from dotenv import load_dotenv
 from urllib.parse import urljoin
+import urllib.parse
 from packaging import version  # helps compare versions properly
+import random
 
 POM_TEMPLATE = """<project>
     <modelVersion>4.0.0</modelVersion>
@@ -44,12 +46,12 @@ print(f"POM file created at: {POM_FILE_PATH}")
 load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI)
-db = client.atlassian_dependency
-collection = db.atlassian_dependencies
+db = client.atlassian_dependency_5
+collection = db.atlassian_dependencies_5
 
 # Atlassian Maven URLs
-ATLASSIAN_REPO_URL = "https://packages.atlassian.com/maven-public/com/atlassian/{}/{}/{}/{}-{}.pom"
-ATLASSIAN_DIRECTORY_URL = "https://packages.atlassian.com/maven-public/com/atlassian/{}/{}/{}/"
+ATLASSIAN_REPO_URL = "https://packages.atlassian.com/maven-public/{}/{}/{}/{}-{}.pom"
+ATLASSIAN_DIRECTORY_URL = "https://packages.atlassian.com/maven-public/{}/{}/{}/"
 BASE_URL = "https://packages.atlassian.com/maven-public/com/atlassian/"
 
 def fetch_last_modified_and_size(group_id, artifact_id, version):
@@ -377,6 +379,11 @@ def process_dependency(group_id, artifact_id, version):
         for dependency in transitive_deps:
             dep_parts = dependency.split(":")
             dep_group_id, dep_artifact_id, dep_version = dep_parts[:3]
+            dependency_id = f"{dep_group_id}:{dep_artifact_id}:{dep_version}"
+            print(f"🔍 Processing transitive dependency: {dependency_id}")
+            if collection.find_one({"_id": dependency_id}):
+                print(f"🔍 Skipping (already processed): {dependency_id}")
+                continue  # Skip if already processed
             process_dependency(dep_group_id, dep_artifact_id, dep_version)
 
 def list_subdirs(url):
@@ -396,24 +403,56 @@ def list_subdirs(url):
             dirs.append(urljoin(url, href))
     return dirs
 
+def recurse_group(group_dir, depth):
+    artifact_dirs = []
+    if len(list_subdirs(group_dir)) == 0:
+        print(f"Reached version directory: {group_dir}")
+    elif depth < 5 and len(list_subdirs(group_dir)) > 0:
+        for dir in list_subdirs(group_dir):
+            if len(list_subdirs(dir)) == 0:
+                print(f"Reached version directory: {dir}")
+                artifact_dirs.append(group_dir)
+                break
+            elif len(list_subdirs(dir)) > 0 and len(list_subdirs(list_subdirs(dir)[0])) > 0:
+                print(f"Recursing into: {dir} at depth {depth}")
+                artifact_dirs.extend(recurse_group(dir, depth + 1))
+            else:
+                print(f"Adding to artifact dirs: {dir}")
+                artifact_dirs.append(dir)
+    else:
+        print(f"Max depth reached in: {group_dir}")
+    
+    return artifact_dirs
+
 def get_all_dependencies(base=BASE_URL):
     """
-    Crawl Atlassian repo (com/atlassian) and get only the latest version
+    Crawl Maven Central repo and get only the latest version
     of each groupId:artifactId and process them.
     """
-    print(f"🌐 Starting crawl from: {base}")
-    # Crawl groupId level (e.g. com/atlassian/jira/, com/atlassian/confluence/)
+    # print(f"🌐 Starting crawl from: {base}")
     group_dirs = list_subdirs(base)
-    for group_dir in group_dirs:
-        artifact_dirs = list_subdirs(group_dir)
-        for artifact_dir in artifact_dirs:
+    for group_dir in group_dirs[560:]: # Restarting from 560 due to interruption
+        # To handle nested groupIds, we need to go deeper
+        artifact_dirs = recurse_group(group_dir, 0)
+
+        # artifacts_indexes = random.sample(range(0, len(artifact_dirs)), min(100, len(artifact_dirs)))
+        artifact_indexes = range(0, len(artifact_dirs))
+        for index in artifact_indexes:
+            artifact_dir = artifact_dirs[index]
             # Extract groupId and artifactId
             parts = artifact_dir.replace(BASE_URL, "").strip("/").split("/")
             group_id = ".".join(parts[:-1])
+            group_id = "com.atlassian." + group_id  # prepend base group
             artifact_id = parts[-1]
 
             # Collect versions
-            versions = [v.rstrip("/").split("/")[-1] for v in list_subdirs(artifact_dir)]
+            versions = []
+            for version in list_subdirs(artifact_dir):
+                version_name = version.rstrip("/").split("/")[-1]       # get the last component
+                version_name = urllib.parse.unquote(version_name)  # decode URL-encoded characters
+                version_name = os.path.basename(version_name)      # ensure it's clean
+                versions.append(version_name)
+
             if not versions:
                 continue
 
@@ -424,15 +463,19 @@ def get_all_dependencies(base=BASE_URL):
                 # fallback: lexicographic max if parsing fails
                 latest = max(versions)
 
-            dependency_id = f"{group_id}:{artifact_id}:{latest}"
-            # Check if the dependency exists 
-            if collection.find_one({"_id": dependency_id}):
-                continue  # Skip if already processed
-            print(f"🔍 Processing: {dependency_id}")
-            process_dependency(group_id, artifact_id, latest)
+            if not (group_id.startswith("%23") or group_id.startswith("_") or group_id == ".."):
+                dependency_id = f"{group_id}:{artifact_id}:{latest}"
+                print(f"🔍 Processing: {dependency_id}")
+                # Check if the dependency exists 
+                if collection.find_one({"_id": dependency_id}):
+                    print(f"🔍 Skipping (already processed): {dependency_id}")
+                    continue  # Skip if already processed
+                process_dependency(group_id, artifact_id, latest)
 
 # Run the script
 get_all_dependencies()
+# print(len(list_subdirs(BASE_URL)))
+# print(list_subdirs(BASE_URL).index(BASE_URL+"translations/"))
 if os.path.exists(POM_FILE_PATH):
         os.remove(POM_FILE_PATH)
         print(f"Deleted temporary POM file: {POM_FILE_PATH}")

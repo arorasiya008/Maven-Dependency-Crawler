@@ -7,7 +7,11 @@ import time
 import subprocess
 import os
 import re
+import random
 from dotenv import load_dotenv
+from urllib.parse import urljoin
+from packaging import version
+import urllib.parse
 
 POM_TEMPLATE = """<project>
     <modelVersion>4.0.0</modelVersion>
@@ -36,13 +40,14 @@ print(f"POM file created at: {POM_FILE_PATH}")
 load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI)
-db = client.mavenCentral_dependency
-collection = db.mavenCentral_dependencies
+db = client.mavenCentral_dependency_5
+collection = db.mavenCentral_dependencies_5
 
 # Maven URLs
 MAVEN_REPO_URL = "https://repo.maven.apache.org/maven2/{}/{}/{}/{}-{}.pom"
 MAVEN_DIRECTORY_URL = "https://repo.maven.apache.org/maven2/{}/{}/{}/"
 MAVEN_SEARCH_API = "https://search.maven.org/solrsearch/select?q=*:*&rows=100&start={}&wt=json"
+BASE_URL = "https://repo.maven.apache.org/maven2/"
 
 def fetch_last_modified_and_size(group_id, artifact_id, version):
     """Fetches timestamp and JAR size from the Maven directory listing, handling different JAR naming patterns."""
@@ -95,7 +100,10 @@ def fetch_last_modified_and_size(group_id, artifact_id, version):
         for key, value in href_dict.items():
             if(key==i):
                 parts = value.split()
-                jar_size=parts[3]
+                if len(parts) > 3:
+                    jar_size=parts[3]
+                else:
+                    jar_size="Unknown"
                 return timestamp, jar_size
         
     return timestamp, jar_size
@@ -366,51 +374,174 @@ def process_dependency(group_id, artifact_id, version):
             for dependency in transitive_deps:
                 dep_parts = dependency.split(":")
                 dep_group_id, dep_artifact_id, dep_version = dep_parts[:3]
-                dependency_id = f"{group_id}:{artifact_id}:{version}"
+                dependency_id = f"{dep_group_id}:{dep_artifact_id}:{dep_version}"
                 # Check if the dependency exists 
+                print(f"🔍 Processing transitive dependency: {dependency_id}")
                 if collection.find_one({"_id": dependency_id}):
+                    print(f"🔍 Skipping (already processed): {dependency_id}")
                     continue  # Skip if already processed
                 process_dependency(dep_group_id, dep_artifact_id, dep_version)
 
     except Exception as e:
-        print(f"Failed to process {dep_group_id}:{dep_artifact_id}:{dep_version}: {e}")
+        print(f"Failed to process {group_id}:{artifact_id}:{version}: {e}")
 
-def get_all_dependencies():
-    """Fetches dependencies from Maven Central and processes them."""
-    start = 0
-    rows = 100  # Number of dependencies per request
+# def get_all_dependencies():
+#     """Fetches dependencies from Maven Central and processes them."""
+#     start = 0
+#     rows = 100  # Number of dependencies per request
 
-    while True:
-        url = MAVEN_SEARCH_API.format(start)
-        response = requests.get(url)
+#     while True:
+#         url = MAVEN_SEARCH_API.format(start)
+#         response = requests.get(url)
         
+#         if response.status_code != 200:
+#             print(f"❌ Error fetching data from Maven Central at start={start}")
+#             continue
+#             #break
+
+#         data = response.json()
+#         docs = data.get("response", {}).get("docs", [])
+
+#         if not docs:
+#             break  # No more data
+
+#         for doc in docs:
+#             group_id = doc.get("g")
+#             artifact_id = doc.get("a")
+#             version = doc.get("latestVersion", "LATEST")
+#             dependency_id = f"{group_id}:{artifact_id}:{version}"
+#             # Check if the dependency exists 
+#             if collection.find_one({"_id": dependency_id}):
+#                 continue  # Skip if already processed
+#             print(f"🔍 Processing: {dependency_id}")
+#             process_dependency(group_id, artifact_id, version)
+
+#         start += rows  # Move to the next page
+#         time.sleep(1)  # Respect API rate limits
+
+def list_subdirs(url):
+    """Return subdirectories from a Maven repo URL."""
+    try:
+        response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print(f"❌ Error fetching data from Maven Central at start={start}")
-            continue
-            #break
+            return []
+    except requests.RequestException:
+        return []
 
-        data = response.json()
-        docs = data.get("response", {}).get("docs", [])
+    soup = BeautifulSoup(response.text, "html.parser")
+    dirs = []
+    for link in soup.find_all("a"):
+        href = link.get("href")
+        if href and href.endswith("/") and href not in ("../", "/"):
+            dirs.append(urljoin(url, href))
+    return dirs
 
-        if not docs:
-            break  # No more data
+def recurse_group(group_dir, depth):
+    artifact_dirs = []
+    if len(list_subdirs(group_dir)) == 0:
+        print(f"Reached version directory: {group_dir}")
+    elif depth < 5 and len(list_subdirs(group_dir)) > 0:
+        for dir in list_subdirs(group_dir):
+            if len(list_subdirs(dir)) == 0:
+                print(f"Reached version directory: {dir}")
+                artifact_dirs.append(group_dir)
+                break
+            elif len(list_subdirs(dir)) > 0 and len(list_subdirs(list_subdirs(dir)[0])) > 0:
+                print(f"Recursing into: {dir} at depth {depth}")
+                artifact_dirs.extend(recurse_group(dir, depth + 1))
+            else:
+                print(f"Adding to artifact dirs: {dir}")
+                artifact_dirs.append(dir)
+    else:
+        print(f"Max depth reached in: {group_dir}")
+    
+    return artifact_dirs
 
-        for doc in docs:
-            group_id = doc.get("g")
-            artifact_id = doc.get("a")
-            version = doc.get("latestVersion", "LATEST")
-            dependency_id = f"{group_id}:{artifact_id}:{version}"
-            # Check if the dependency exists 
-            if collection.find_one({"_id": dependency_id}):
-                continue  # Skip if already processed
-            print(f"🔍 Processing: {dependency_id}")
-            process_dependency(group_id, artifact_id, version)
+def get_all_dependencies(base=BASE_URL):
+    """
+    Crawl Maven Central repo and get only the latest version
+    of each groupId:artifactId and process them.
+    """
+    # print(f"🌐 Starting crawl from: {base}")
+    group_dirs = list_subdirs(base)
+    for group_dir in group_dirs[247:]: # Restarting from 246 due to interruption
+        # To handle nested groupIds, we need to go deeper
+        artifact_dirs = recurse_group(group_dir, 0)
 
-        start += rows  # Move to the next page
-        time.sleep(1)  # Respect API rate limits
+        artifact_indexes = random.sample(range(0, len(artifact_dirs)), min(100, len(artifact_dirs)))
+        for index in artifact_indexes:
+            artifact_dir = artifact_dirs[index]
+            # Extract groupId and artifactId
+            parts = artifact_dir.replace(BASE_URL, "").strip("/").split("/")
+            group_id = ".".join(parts[:-1])
+            artifact_id = parts[-1]
 
+            # Collect versions
+            versions = []
+            for version in list_subdirs(artifact_dir):
+                version_name = version.rstrip("/").split("/")[-1]       # get the last component
+                version_name = urllib.parse.unquote(version_name)  # decode URL-encoded characters
+                version_name = os.path.basename(version_name)      # ensure it's clean
+                versions.append(version_name)
+
+            if not versions:
+                continue
+
+            # Pick the latest version (semantic comparison)
+            try:
+                latest = str(max((version.parse(v) for v in versions)))
+            except Exception:
+                # fallback: lexicographic max if parsing fails
+                latest = max(versions)
+
+            if not (group_id.startswith("%23") or group_id.startswith("_") or group_id == ".."):
+                dependency_id = f"{group_id}:{artifact_id}:{latest}"
+                print(f"🔍 Processing: {dependency_id}")
+                # Check if the dependency exists 
+                if collection.find_one({"_id": dependency_id}):
+                    print(f"🔍 Skipping (already processed): {dependency_id}")
+                    continue  # Skip if already processed
+                process_dependency(group_id, artifact_id, latest)
+                
 # Run the script
 get_all_dependencies()
+# print(len(list_subdirs(BASE_URL)))
+# print(list_subdirs(BASE_URL).index(BASE_URL+"dev/"))
+# recurse_group("https://repo.maven.apache.org/maven2/app/cybrid", 1)
+# Query for documents with description null or missing
+# query = {"$or": [{"description": None}, {"description": {"$exists": False}}]}
+# docs = collection.find({ "_id": { "$regex": "^ai." } })
+# print(len(list(docs)))
+
+# Fetch results
+# results = list(collection.find(query))
+# print(f"Found {len(results)} unprocessed parent dependencies.")
+
+# for doc in results:
+#     dep_id = doc["_id"]
+#     group_id, artifact_id, version = dep_id.split(":")[:3]
+#     print(f"🔍 Processing unprocessed parent: {dep_id}")
+#     process_dependency(group_id, artifact_id, version)
+
+# pipeline = [
+#     {"$project": {"parts": {"$split": ["$_id", ":"]}}},
+#     {
+#         "$group": {
+#             "_id": {
+#                 "groupId": {"$arrayElemAt": ["$parts", 0]},
+#                 "artifactId": {"$arrayElemAt": ["$parts", 1]},
+#             },
+#             "versions": {"$addToSet": {"$arrayElemAt": ["$parts", 2]}},
+#             "count": {"$sum": 1},
+#         }
+#     },
+#     {"$match": {"count": {"$gt": 1}}},
+#     {"$sort": {"count": -1}},
+# ]
+
+# for doc in collection.aggregate(pipeline):
+#     print(doc)
+
 if os.path.exists(POM_FILE_PATH):
         os.remove(POM_FILE_PATH)
         print(f"Deleted temporary POM file: {POM_FILE_PATH}")
