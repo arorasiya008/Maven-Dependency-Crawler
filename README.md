@@ -106,3 +106,4 @@ Maven projects often use **properties (`${property.name}`)** to define reusable 
   - `${project.artifactId}` → `<artifactId>` from `pom.xml`. 
 
 
+
