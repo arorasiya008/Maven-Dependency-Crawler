@@ -6,6 +6,7 @@ import re
 from pymongo import MongoClient
 from datetime import datetime
 import time
+from dotenv import load_dotenv
 #Get all necessary info and store it mongodb
 # MongoDB connection setup (configure as needed)
 load_dotenv()
