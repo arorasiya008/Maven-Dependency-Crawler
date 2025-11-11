@@ -1,3 +1,4 @@
+import json
 import requests
 import xmltodict
 from pymongo import MongoClient
@@ -180,8 +181,8 @@ def restore_pom_file(group_id, artifact_id, version):
     with open(POM_FILE_PATH, "w") as file:
         file.write(POM_TEMPLATE)
 
-def get_transitive_dependencies(group_id, artifact_id, version):
-    """Extracts transitive dependencies using the mvn dependency:tree command."""
+def get_direct_dependencies(group_id, artifact_id, version):
+    """Extracts direct dependencies using the mvn dependency:tree command."""
     modify_pom_file(group_id, artifact_id, version)  # Replace placeholders with real values
     dependencies = []
 
@@ -272,7 +273,7 @@ def parse_pom(pom_xml, group_id, artifact_id, version):
 
     return description, source_code_url, parent_module, child_modules
 
-def store_dependency(group_id, artifact_id, version, last_modified, jar_size, description, transitive_deps, source_code_url, parent_module, child_modules):
+def store_dependency(group_id, artifact_id, version, last_modified, jar_size, description, direct_deps, source_code_url, parent_module, child_modules):
     """Stores dependency in MongoDB with last modified timestamp and JAR size."""
     dependency_id = f"{group_id}:{artifact_id}:{version}"
 
@@ -295,7 +296,7 @@ def store_dependency(group_id, artifact_id, version, last_modified, jar_size, de
                 "last_modified": None,
                 "jar_size": None,
                 "description": None,  # Flag: Description is None before processing
-                "transitive_dependencies": [],
+                "direct_dependencies": [],
                 "source_code_url": None,
                 "parent_module": None,
                 "child_modules": [dependency_id]
@@ -312,7 +313,7 @@ def store_dependency(group_id, artifact_id, version, last_modified, jar_size, de
                     "last_modified": last_modified,
                     "jar_size": jar_size,
                     "description": description,
-                    "transitive_dependencies": transitive_deps,
+                    "direct_dependencies": direct_deps,
                     "source_code_url": source_code_url,
                     "parent_module": parent_module
                 },
@@ -328,7 +329,7 @@ def store_dependency(group_id, artifact_id, version, last_modified, jar_size, de
             "last_modified": last_modified,
             "jar_size": jar_size,
             "description": description,
-            "transitive_dependencies": transitive_deps,
+            "direct_dependencies": direct_deps,
             "source_code_url": source_code_url,
             "parent_module": parent_module,
             "child_modules": child_modules
@@ -336,7 +337,7 @@ def store_dependency(group_id, artifact_id, version, last_modified, jar_size, de
         print(f"✅ Added to DB: {dependency_id} (Last Modified: {last_modified}, Size: {jar_size})")
 
 def process_dependency(group_id, artifact_id, version):
-    """Processes a single dependency and its transitive dependencies."""
+    """Processes a single dependency and its direct dependencies."""
     try:
         # Fetch last modified timestamp & JAR size
         last_modified, jar_size = fetch_last_modified_and_size(group_id, artifact_id, version)
@@ -344,28 +345,28 @@ def process_dependency(group_id, artifact_id, version):
         # Try fetching the POM
         pom_xml = fetch_pom(group_id, artifact_id, version)
         
-        transitive_deps = []
+        direct_deps = []
         description = "Unknown"
         source_code_url = "Unknown"
         parent_module = "Unknown"
         child_modules = []
 
         if pom_xml:
-            # Extract transitive dependencies using mvn dependency:tree
-            transitive_deps = get_transitive_dependencies(group_id, artifact_id, version)
+            # Extract direct dependencies using mvn dependency:tree
+            direct_deps = get_direct_dependencies(group_id, artifact_id, version)
 
             # Parse the POM for other details
             description, source_code_url, parent_module, child_modules = parse_pom(pom_xml, group_id, artifact_id, version)
 
-        # Store in MongoDB only if POM was found and transitive dependencies are resolved
-        if pom_xml and transitive_deps is not None:
-            store_dependency(group_id, artifact_id, version, last_modified, jar_size, description, transitive_deps, source_code_url, parent_module, child_modules)
-            for dependency in transitive_deps:
+        # Store in MongoDB only if POM was found and direct dependencies are resolved
+        if pom_xml and direct_deps is not None:
+            store_dependency(group_id, artifact_id, version, last_modified, jar_size, description, direct_deps, source_code_url, parent_module, child_modules)
+            for dependency in direct_deps:
                 dep_parts = dependency.split(":")
                 dep_group_id, dep_artifact_id, dep_version = dep_parts[:3]
                 dependency_id = f"{dep_group_id}:{dep_artifact_id}:{dep_version}"
                 # Check if the dependency exists
-                print(f"🔍 Processing transitive dependency: {dependency_id}")
+                print(f"🔍 Processing direct dependency: {dependency_id}")
                 if collection.find_one({"_id": dependency_id}):
                     print(f"Skipping (already processed): {dependency_id}")
                     continue  # Skip if already processed
@@ -457,8 +458,8 @@ def get_all_dependencies(base=BASE_URL):
                 process_dependency(group_id, artifact_id, latest)
 
 # Run the script
-
-get_all_dependencies()
+try:
+     get_all_dependencies()
 # print(len(list_subdirs(BASE_URL)))
 # print(list_subdirs(BASE_URL).index(BASE_URL+"love/"))
 # query = {"$or": [{"description": None}, {"description": {"$exists": False}}]}
@@ -475,6 +476,17 @@ get_all_dependencies()
 #     print(f"🔍 Processing unprocessed parent: {dep_id}")
 #     process_dependency(group_id, artifact_id, version)
 
-if os.path.exists(POM_FILE_PATH):
-        os.remove(POM_FILE_PATH)
-        print(f"Deleted temporary POM file: {POM_FILE_PATH}")
+except Exception as e:
+    print(f"Error occurred or program was interrupted: {e}")
+finally:
+    # Clean up: remove the temporary POM file
+    if os.path.exists(POM_FILE_PATH):
+            os.remove(POM_FILE_PATH)
+            print(f"Deleted temporary POM file: {POM_FILE_PATH}")
+
+    # Export the database to a JSON file
+    print("Exporting database to cloudera_dependencies.json...")
+    data = list(collection.find({},))  # remove _id
+
+    with open("cloudera_dependencies.json", "w") as f:
+        json.dump(data, f, indent=2)

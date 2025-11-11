@@ -11,22 +11,22 @@ with open("dependency_dataset.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
 # Results containers
-transitive_counts = {}  # dependency -> number of transitive deps
-transitive_frequency = Counter()
+direct_counts = {}  # dependency -> number of direct deps
+direct_frequency = Counter()
 repo_dependency_counts = Counter()
 repo_attribute_counts = defaultdict(lambda: Counter())
 
 for dep in data:
     dep_id = dep["_id"]
     
-    # Count transitive dependencies
-    transitive = dep.get("transitive_dependencies", [])
-    transitive_counts[dep_id] = len(transitive)
+    # Count direct dependencies
+    direct = dep.get("direct_dependencies", [])
+    direct_counts[dep_id] = len(direct)
     
-    # Update frequency counts for each transitive dependency group id
-    for t in transitive:
+    # Update frequency counts for each direct dependency group id
+    for t in direct:
         parts = t.split(":")
-        transitive_frequency[parts[0]] += 1
+        direct_frequency[parts[0]] += 1
 
     # Attribute coverage
     for attr in ["description", "source_code_url", "last_modified", "jar_size", "parent_module"]:
@@ -42,16 +42,16 @@ for dep in data:
 # Total number of dependencies
 print("Number of dependencies in dataset:", len(data))
 
-# Top 10 most frequent transitive dependencies
-print("Top 10 most frequent transitive dependencies groups:")
-for dep, freq in transitive_frequency.most_common(10):
+# Top 10 most frequent direct dependencies
+print("Top 10 most frequent direct dependencies groups:")
+for dep, freq in direct_frequency.most_common(10):
     print(dep, "->", freq)
 
-# Data: number of transitive dependencies per dependency
-num_transitive_deps = list(transitive_counts.values())
+# Data: number of direct dependencies per dependency
+num_direct_deps = list(direct_counts.values())
 
 # Shift 0-values slightly above 0 for log scale
-data_for_plot = [x+0.1 for x in num_transitive_deps]
+data_for_plot = [x+0.1 for x in num_direct_deps]
 
 fig, ax = plt.subplots(figsize=(10, 4))
 
@@ -70,13 +70,13 @@ ax.set_xscale('log')
 xticks = [0.1, 1, 2, 5, 10, 20, 50, 100]
 ax.set_xticks(xticks)
 ax.set_xticklabels(['0', '1', '2', '5', '10', '20', '50', '100'])
-ax.set_xlabel("Number of Transitive Dependencies", fontsize=12)
+ax.set_xlabel("Number of Direct Dependencies", fontsize=12)
 
 # Remove y-axis label
 ax.get_yaxis().set_visible(False)
 
 # Title
-ax.set_title("Distribution of Transitive Dependencies per Dependency", fontsize=14, fontweight='bold')
+ax.set_title("Distribution of Direct Dependencies per Dependency", fontsize=14, fontweight='bold')
 
 # Grid
 ax.grid(axis='x', linestyle='--', alpha=0.7)

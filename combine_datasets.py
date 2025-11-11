@@ -37,7 +37,7 @@ final_df = combined.groupby("_id", as_index=False).apply(merge_by_id)
 final_df.reset_index(drop=True, inplace=True)
 
 # ---- STEP 4: Save to output ----
-final_df.to_json("dependency_dataset.json", orient="records", indent=4, force_ascii=False)
+final_df.to_json("MavCrawl_dataset.json", orient="records", indent=4, force_ascii=False)
 
 print("✅ Merging complete! Output saved as dependency_dataset.json")
 print("Total unique dependencies in combined dataset:", len(final_df))

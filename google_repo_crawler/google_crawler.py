@@ -1,3 +1,4 @@
+import json
 import requests
 import xml.etree.ElementTree as ET
 import subprocess
@@ -159,17 +160,17 @@ def parse_gradle_dependencies_file(file_path):
 
     return cleaned_deps
 
-def get_transitive_dependencies(group_id, artifact_id, version):
+def get_direct_dependencies(group_id, artifact_id, version):
     target_dependency = f"{group_id}:{artifact_id}:{version}"
 
     if not modify_gradle_build(group_id, artifact_id, version):
         return []
 
     output_file = run_gradle_dependencies()
-    transitive_deps = parse_gradle_dependencies_file(output_file)
+    direct_deps = parse_gradle_dependencies_file(output_file)
 
     # Filter to include only lines that actually belong to the target dependency
-    filtered_deps = [dep for dep in transitive_deps if target_dependency in dep or True]  # Keep all lines for now
+    filtered_deps = [dep for dep in direct_deps if target_dependency in dep or True]  # Keep all lines for now
 
     return filtered_deps
 
@@ -221,8 +222,8 @@ def process_artifact(group_id, artifact_id, version):
         # Fetch AAR info
         size, last_modified = fetch_aar_info(group_id, artifact_id, version)
         
-        # Get transitive dependencies
-        transitive_dependencies = get_transitive_dependencies(group_id, artifact_id, version)
+        # Get direct dependencies
+        direct_dependencies = get_direct_dependencies(group_id, artifact_id, version)
         
         # Create document for MongoDB with full dependency name as _id
         artifact_data = {
@@ -233,7 +234,7 @@ def process_artifact(group_id, artifact_id, version):
             "jar_size": size,
             "last_modified": last_modified,
             
-            "transitive_dependencies": transitive_dependencies
+            "direct_dependencies": direct_dependencies
             
         }
         
@@ -383,4 +384,15 @@ if __name__ == "__main__":
     #process_single_artifact("com.google.android.material", "material", "1.10.0")
     
     # Or process all artifacts (use with caution - this will take a long time)
-    process_all_artifacts()  
+    try:
+        process_all_artifacts()  
+    except Exception as e:
+        print(f"Error occurred or program was interrupted: {e}")
+    finally:
+        collection = get_mongo_collection()
+        # Export the database to a JSON file
+        print("Exporting database to google_repo_dataset.json...")
+        data = list(collection.find({},))
+
+        with open("google_repo_dataset.json", "w") as f:
+            json.dump(data, f, indent=2)
