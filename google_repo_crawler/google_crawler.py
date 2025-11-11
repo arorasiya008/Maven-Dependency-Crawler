@@ -7,9 +7,13 @@ import re
 from pymongo import MongoClient
 from datetime import datetime
 import time
+from dotenv import load_dotenv
+from packaging import version  # for proper version comparison
 #Get all necessary info and store it mongodb
 # MongoDB connection setup (configure as needed)
-MONGO_URI = "mongodb+srv://parvathin:parvathi2004@cluster0.d0vrx.mongodb.net/"
+load_dotenv()
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
 DB_NAME = "maven_artifacts_google"
 COLLECTION_NAME = "artifact_metadata4"
 
